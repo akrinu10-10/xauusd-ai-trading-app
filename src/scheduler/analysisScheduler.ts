@@ -2,19 +2,19 @@
 // Menyatukan twelveDataService, indicatorEngine, geminiService, dan database
 // jadi satu siklus analisa yang jalan tiap 15 menit.
 
-import { TwelveDataService, Candle } from "../services/twelveDataService";
 import {
-  GeminiService,
-  IndicatorSummaryInput,
-  GeminiAnalysisResult,
-} from "../services/geminiService";
-import { buildIndicatorSnapshot } from "../services/indicatorEngine";
-import {
-  saveCandles,
+  getLatestAnalysis,
   getLatestCandles,
   saveAnalysisResult,
-  getLatestAnalysis,
+  saveCandles,
 } from "../db/database";
+import {
+  GeminiAnalysisResult,
+  GeminiService,
+  IndicatorSummaryInput,
+} from "../services/geminiService";
+import { buildIndicatorSnapshot } from "../services/indicatorEngine";
+import { Candle, TwelveDataService } from "../services/twelveDataService";
 
 const SYMBOL = "XAU/USD";
 const INTERVAL = "15min";
@@ -28,6 +28,7 @@ export class AnalysisScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
   private onCycleComplete?: (result: GeminiAnalysisResult) => void;
+  private onErrorCallback?: (err: Error) => void;
 
   constructor(twelveDataApiKey: string, geminiApiKey: string) {
     this.twelveData = new TwelveDataService(twelveDataApiKey);
@@ -37,6 +38,11 @@ export class AnalysisScheduler {
   /** Daftarkan callback yang dipanggil tiap siklus selesai, untuk refresh UI. */
   onCycle(callback: (result: GeminiAnalysisResult) => void): void {
     this.onCycleComplete = callback;
+  }
+
+  /** PERBAIKAN: daftarkan callback yang dipanggil kalau satu siklus gagal. */
+  onError(callback: (err: Error) => void): void {
+    this.onErrorCallback = callback;
   }
 
   /**
@@ -50,7 +56,7 @@ export class AnalysisScheduler {
     if (this.timer) return; // sudah jalan, jangan dobel
 
     this.timer = setInterval(() => {
-      this.runCycle().catch((err) => console.error("Siklus analisa gagal:", err));
+      this.runCycle();
     }, CYCLE_MS);
   }
 
@@ -60,6 +66,15 @@ export class AnalysisScheduler {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /**
+   * PERBAIKAN: panggil ini saat app kembali ke foreground (AppState -> "active").
+   * setInterval JS bisa tertunda/berhenti efektif saat app lama di background,
+   * jadi perlu re-check manual apakah siklus sudah telat.
+   */
+  async resume(): Promise<void> {
+    await this.catchUpIfNeeded();
   }
 
   /** Dipanggil saat app dibuka kembali setelah sempat tertutup. */
@@ -85,6 +100,9 @@ export class AnalysisScheduler {
    * 4. Kirim ringkasan ke Gemini, minta analisa terstruktur
    * 5. Simpan hasil analisa
    * 6. Beri tahu UI lewat callback
+   *
+   * PERBAIKAN: sekarang tidak pernah throw ke pemanggil — semua error
+   * ditangkap dan dialirkan lewat onErrorCallback, supaya UI bisa tahu.
    */
   async runCycle(): Promise<void> {
     if (this.isRunning) return; // cegah tumpang tindih kalau siklus sebelumnya belum selesai
@@ -98,6 +116,12 @@ export class AnalysisScheduler {
       await saveCandles(SYMBOL, INTERVAL, candles);
 
       const storedCandles = await getLatestCandles(SYMBOL, INTERVAL, CANDLES_FOR_INDICATORS);
+
+      // PERBAIKAN: guard sebelum akses index terakhir.
+      if (storedCandles.length === 0) {
+        throw new Error("Belum ada candle tersimpan untuk dianalisa.");
+      }
+
       const snapshot = buildIndicatorSnapshot(storedCandles);
       const lastClose = storedCandles[storedCandles.length - 1].close;
 
@@ -119,6 +143,10 @@ export class AnalysisScheduler {
       await saveAnalysisResult(SYMBOL, cycleTime, result);
 
       this.onCycleComplete?.(result);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error("Siklus analisa gagal:", error);
+      this.onErrorCallback?.(error);
     } finally {
       this.isRunning = false;
     }

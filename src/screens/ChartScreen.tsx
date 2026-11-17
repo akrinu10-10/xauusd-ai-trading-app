@@ -3,7 +3,7 @@
 // Menyatukan AnalysisScheduler, database, ChartWebView, dan AnalysisCard.
 
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { AppState, StyleSheet, Text, View } from "react-native";
 import { AnalysisCard } from "../components/AnalysisCard";
 import { ChartWebView, ChartWebViewHandle } from "../components/ChartWebView";
 import { getLatestAnalysis, getLatestCandles } from "../db/database";
@@ -22,27 +22,43 @@ interface Props {
 
 export function ChartScreen({ twelveDataApiKey, geminiApiKey }: Props) {
   const chartRef = useRef<ChartWebViewHandle>(null);
+  const schedulerRef = useRef<AnalysisScheduler | null>(null);
   const [latestAnalysis, setLatestAnalysis] = useState<
     (GeminiAnalysisResult & { cycle_time: string }) | null
   >(null);
   const [chartReady, setChartReady] = useState(false);
+  // PERBAIKAN: state error supaya user tahu kalau ada yang gagal,
+  // bukan cuma diam di "Menunggu analisa pertama..." selamanya.
+  const [lastError, setLastError] = useState<string | null>(null);
 
-  // Mulai scheduler sekali saat layar dibuka, hentikan saat layar ditutup.
+  // PERBAIKAN: dependency array sekarang [twelveDataApiKey, geminiApiKey]
+  // (bukan [] lagi) — supaya kalau user ganti API key di tab Settings lalu
+  // balik ke tab ini, scheduler lama dihentikan dan dibuat ulang dengan
+  // key yang baru, bukan terus pakai key lama.
   useEffect(() => {
     const scheduler = new AnalysisScheduler(twelveDataApiKey, geminiApiKey);
+    schedulerRef.current = scheduler;
 
     scheduler.onCycle(async (result) => {
       setLatestAnalysis({ ...result, cycle_time: new Date().toISOString() });
+      setLastError(null); // siklus berhasil -> bersihkan error lama
       await refreshChart();
     });
 
-    scheduler.start().catch((err) => console.error("Gagal mulai scheduler:", err));
+    // PERBAIKAN: alirkan error dari scheduler ke UI.
+    scheduler.onError((err) => {
+      setLastError(err.message);
+    });
+
+    scheduler.start();
 
     loadInitialData();
 
-    return () => scheduler.stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => {
+      scheduler.stop();
+      schedulerRef.current = null;
+    };
+  }, [twelveDataApiKey, geminiApiKey]);
 
   // Begitu WebView siap, kirim candle yang sudah tersimpan di SQLite (kalau ada).
   useEffect(() => {
@@ -51,6 +67,18 @@ export function ChartScreen({ twelveDataApiKey, geminiApiKey }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartReady]);
+
+  // PERBAIKAN: saat app kembali ke foreground setelah lama di-background,
+  // cek manual apakah siklus analisa sudah telat (setInterval bisa tertunda
+  // saat OS men-suspend JS timer).
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        schedulerRef.current?.resume();
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   async function loadInitialData() {
     const analysis = await getLatestAnalysis(SYMBOL);
@@ -67,6 +95,11 @@ export function ChartScreen({ twelveDataApiKey, geminiApiKey }: Props) {
       <View style={styles.chartContainer}>
         <ChartWebView ref={chartRef} onReady={() => setChartReady(true)} />
       </View>
+      {lastError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{lastError}</Text>
+        </View>
+      )}
       <AnalysisCard result={latestAnalysis} />
     </View>
   );
@@ -79,5 +112,14 @@ const styles = StyleSheet.create({
   },
   chartContainer: {
     flex: 1,
+  },
+  errorBanner: {
+    backgroundColor: "#3a1a1a",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  errorText: {
+    color: "#ff6b6b",
+    fontSize: 13,
   },
 });

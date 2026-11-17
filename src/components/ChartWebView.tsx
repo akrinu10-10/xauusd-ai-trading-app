@@ -2,10 +2,11 @@
 // Wrapper WebView yang merender CHART_HTML dan menerima update candle
 // dari parent (ChartScreen) lewat ref, memakai postMessage.
 
-import React, { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useImperativeHandle, useRef } from "react";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { CHART_HTML } from "../assets/chartHtml";
 import { Candle } from "../services/twelveDataService";
+import { TypedWebView } from "./TypedWebView";
 
 export interface ChartWebViewHandle {
   setCandles: (candles: Candle[]) => void;
@@ -54,7 +55,7 @@ export const ChartWebView = forwardRef<ChartWebViewHandle, Props>(function Chart
   }
 
   return (
-    <WebView
+    <TypedWebView
       ref={webViewRef}
       originWhitelist={["*"]}
       source={{ html: CHART_HTML }}

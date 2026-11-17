@@ -81,8 +81,11 @@ export class TwelveDataService {
       throw new TwelveDataError(`Twelve Data error: ${data.message}`);
     }
 
-    if (!data.values) {
-      throw new TwelveDataError("Twelve Data tidak mengembalikan data candle.");
+    // PERBAIKAN: cek array kosong juga, bukan cuma undefined.
+    if (!data.values || data.values.length === 0) {
+      throw new TwelveDataError(
+        "Twelve Data tidak mengembalikan data candle (kosong). Coba lagi nanti."
+      );
     }
 
     const candles: Candle[] = data.values.map((raw) => ({

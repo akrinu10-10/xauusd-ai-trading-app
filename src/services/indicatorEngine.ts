@@ -84,10 +84,23 @@ export function calculateADX(candles: Candle[], period: number = 14): number {
   const smoothedPlusDM = wilderSmooth(plusDM, period);
   const smoothedMinusDM = wilderSmooth(minusDM, period);
 
+  // PERBAIKAN: smoothedTR bisa 0 kalau pasar benar-benar flat (candle duplikat
+  // tanpa pergerakan sama sekali) -> hindari pembagian 0/0 jadi NaN.
+  if (smoothedTR === 0) {
+    return 0;
+  }
+
   const plusDI = (smoothedPlusDM / smoothedTR) * 100;
   const minusDI = (smoothedMinusDM / smoothedTR) * 100;
+  const diSum = plusDI + minusDI;
 
-  return (Math.abs(plusDI - minusDI) / (plusDI + minusDI)) * 100;
+  // PERBAIKAN: plusDI + minusDI juga bisa 0 -> tanpa guard ini jadi NaN,
+  // lalu "ADX: NaN" lolos masuk ke prompt Gemini tanpa terdeteksi.
+  if (diSum === 0) {
+    return 0;
+  }
+
+  return (Math.abs(plusDI - minusDI) / diSum) * 100;
 }
 
 /** Bollinger Bands dari harga close. */
