@@ -5,11 +5,13 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { CHART_HTML } from "../assets/chartHtml";
+import { PaperPosition } from "../db/database";
 import { Candle } from "../services/twelveDataService";
 import { TypedWebView } from "./TypedWebView";
 
 export interface ChartWebViewHandle {
   setCandles: (candles: Candle[]) => void;
+  setPositionLines: (position: PaperPosition | null) => void;
 }
 
 interface Props {
@@ -40,6 +42,22 @@ export const ChartWebView = forwardRef<ChartWebViewHandle, Props>(function Chart
         })),
       };
       webViewRef.current?.postMessage(JSON.stringify(payload));
+    },
+    setPositionLines(position: PaperPosition | null) {
+      webViewRef.current?.postMessage(
+        JSON.stringify({
+          type: "SET_POSITION_LINES",
+          position:
+            position &&
+            (position.status === "pending" || position.status === "open")
+              ? {
+                  entry: position.entry,
+                  stopLoss: position.stop_loss,
+                  takeProfit: position.take_profit,
+                }
+              : null,
+        })
+      );
     },
   }));
 

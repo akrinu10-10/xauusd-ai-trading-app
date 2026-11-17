@@ -1,6 +1,6 @@
 // twelveDataService.ts
 // Mengambil data candle XAU/USD dari Twelve Data API (time_series endpoint).
-// Dipakai sebagai sumber data harga untuk engine indikator & analisa AI.
+// Dipakai sebagai sumber data harga untuk chart, simulasi posisi, dan analisa AI.
 
 const BASE_URL = "https://api.twelvedata.com";
 
@@ -52,7 +52,7 @@ export class TwelveDataService {
   /**
    * Ambil candle terbaru untuk XAU/USD.
    * @param interval contoh: "15min", "1h", "1day"
-   * @param outputSize jumlah candle yang diambil (cukup 50-100 untuk hitung ADX/ATR/BB)
+   * @param outputSize jumlah candle yang diambil
    */
   async getXauUsdCandles(
     interval: string = "15min",
@@ -69,7 +69,7 @@ export class TwelveDataService {
     let response: Response;
     try {
       response = await fetch(url, { signal });
-    } catch (err) {
+    } catch {
       throw new TwelveDataError(
         "Gagal menghubungi Twelve Data. Cek koneksi internet."
       );

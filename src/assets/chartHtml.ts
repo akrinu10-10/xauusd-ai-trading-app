@@ -33,6 +33,43 @@ export const CHART_HTML = `
       wickUpColor: '#26a69a',
       wickDownColor: '#ef5350',
     });
+    let positionLines = [];
+
+    function setPositionLines(position) {
+      positionLines.forEach(function (line) {
+        candleSeries.removePriceLine(line);
+      });
+      positionLines = [];
+
+      if (!position) return;
+
+      positionLines = [
+        candleSeries.createPriceLine({
+          price: position.entry,
+          color: '#42a5f5',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'ENTRY',
+        }),
+        candleSeries.createPriceLine({
+          price: position.stopLoss,
+          color: '#ef5350',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'SL',
+        }),
+        candleSeries.createPriceLine({
+          price: position.takeProfit,
+          color: '#26a69a',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'TP',
+        }),
+      ];
+    }
 
     window.addEventListener('resize', function () {
       chart.resize(window.innerWidth, window.innerHeight);
@@ -54,6 +91,10 @@ export const CHART_HTML = `
 
         if (payload.type === 'UPDATE_CANDLE') {
           candleSeries.update(payload.candle);
+        }
+
+        if (payload.type === 'SET_POSITION_LINES') {
+          setPositionLines(payload.position);
         }
       } catch (err) {
         // Abaikan pesan yang bukan untuk chart ini.

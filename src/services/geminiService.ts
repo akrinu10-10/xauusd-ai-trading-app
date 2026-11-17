@@ -1,23 +1,18 @@
 // geminiService.ts
-// Memanggil Gemini API untuk analisa naratif berdasarkan ringkasan indikator.
+// Memanggil Gemini API untuk analisa langsung dari data candle OHLC.
 // Dipanggil tiap siklus 15 menit oleh analysisScheduler, bukan tiap candle.
+
+import { Candle } from "./twelveDataService";
 
 // Cek nama model aktif & free tier-nya di aistudio.google.com sebelum deploy —
 // penamaan model Gemini berubah dari waktu ke waktu.
 const GEMINI_MODEL = "gemini-flash-lite-latest";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
-export interface IndicatorSummaryInput {
+export interface MarketAnalysisInput {
   symbol: string;
-  intervalLabel: string; // contoh: "M15"
-  lastClose: number;
-  adx: number;
-  atr: number;
-  bbUpper: number;
-  bbMiddle: number;
-  bbLower: number;
-  bbWidthPercent: number;
-  regime: string;
+  intervalLabel: string;
+  candles: Candle[];
 }
 
 export interface GeminiAnalysisResult {
@@ -26,9 +21,62 @@ export interface GeminiAnalysisResult {
   direction: "buy" | "sell" | "none";
   confidence: "low" | "medium" | "high";
   reasoning: string;
+  entry: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
 }
 
 export class GeminiError extends Error {}
+
+function isGeminiAnalysisResult(value: unknown): value is GeminiAnalysisResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const result = value as Record<string, unknown>;
+  const validSummary =
+    (result.trend === "uptrend" ||
+      result.trend === "downtrend" ||
+      result.trend === "sideways") &&
+    typeof result.can_open === "boolean" &&
+    (result.direction === "buy" ||
+      result.direction === "sell" ||
+      result.direction === "none") &&
+    (result.confidence === "low" ||
+      result.confidence === "medium" ||
+      result.confidence === "high") &&
+    typeof result.reasoning === "string";
+
+  if (!validSummary) return false;
+
+  if (!result.can_open) {
+    return (
+      result.direction === "none" &&
+      result.entry === null &&
+      result.stop_loss === null &&
+      result.take_profit === null
+    );
+  }
+
+  if (
+    result.direction === "none" ||
+    typeof result.entry !== "number" ||
+    typeof result.stop_loss !== "number" ||
+    typeof result.take_profit !== "number" ||
+    !Number.isFinite(result.entry) ||
+    !Number.isFinite(result.stop_loss) ||
+    !Number.isFinite(result.take_profit) ||
+    result.entry <= 0 ||
+    result.stop_loss <= 0 ||
+    result.take_profit <= 0
+  ) {
+    return false;
+  }
+
+  return result.direction === "buy"
+    ? result.stop_loss < result.entry && result.entry < result.take_profit
+    : result.take_profit < result.entry && result.entry < result.stop_loss;
+}
 
 export class GeminiService {
   private readonly apiKey: string;
@@ -43,7 +91,7 @@ export class GeminiService {
     this.apiKey = apiKey;
   }
 
-  async analyze(input: IndicatorSummaryInput): Promise<GeminiAnalysisResult> {
+  async analyze(input: MarketAnalysisInput): Promise<GeminiAnalysisResult> {
     const prompt = this.buildPrompt(input);
     const url = `${BASE_URL}/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`;
 
@@ -60,7 +108,7 @@ export class GeminiService {
           },
         }),
       });
-    } catch (err) {
+    } catch {
       throw new GeminiError("Gagal menghubungi Gemini API. Cek koneksi internet.");
     }
 
@@ -79,41 +127,39 @@ export class GeminiService {
     return this.parseResult(text);
   }
 
-  private buildPrompt(input: IndicatorSummaryInput): string {
-    return `Kamu analis teknikal untuk ${input.symbol}. Jawab HANYA dalam JSON valid, tanpa teks lain, tanpa markdown code fence.
-Schema: { "trend": "uptrend|downtrend|sideways", "can_open": true|false, "direction": "buy|sell|none", "confidence": "low|medium|high", "reasoning": "string singkat dalam Bahasa Indonesia" }
+  private buildPrompt(input: MarketAnalysisInput): string {
+    const candles = input.candles.map(({ datetime, open, high, low, close }) => [
+      datetime,
+      open,
+      high,
+      low,
+      close,
+    ]);
 
-Data ${input.intervalLabel} terbaru untuk ${input.symbol}:
-- Harga penutupan terakhir: ${input.lastClose}
-- ADX: ${input.adx.toFixed(2)} (regime saat ini: ${input.regime})
-- ATR: ${input.atr.toFixed(2)}
-- Bollinger Band: upper=${input.bbUpper.toFixed(2)}, middle=${input.bbMiddle.toFixed(2)}, lower=${input.bbLower.toFixed(2)}, width=${input.bbWidthPercent.toFixed(2)}%
+    return `Kamu analis pasar ${input.symbol}. Buat penilaian independen berdasarkan price action dari data OHLC yang diberikan. Tidak ada indikator teknikal yang dihitung aplikasi; gunakan pendekatan analisismu sendiri, tetapi jangan mengklaim data atau berita di luar input.
 
-Analisa tren saat ini berdasarkan data di atas, tentukan apakah ini momen yang masuk akal untuk membuka posisi, dan jelaskan alasannya secara singkat dan konkret (sebutkan indikator mana yang mendukung kesimpulanmu).`;
+Data ${input.intervalLabel} disusun dari candle terlama ke terbaru. Setiap candle berupa [waktu, open, high, low, close]:
+${JSON.stringify(candles)}
+
+Nilai arah yang mungkin terjadi pada 4-8 candle berikutnya dan tentukan level entry yang layak ditunggu, stop loss, dan take profit berdasarkan struktur harga. Untuk buy, pastikan stop_loss < entry < take_profit. Untuk sell, pastikan take_profit < entry < stop_loss. Jika arah atau level harga tidak jelas, pilih can_open false, direction "none", dan isi entry, stop_loss, take_profit dengan null. Jelaskan konteks dan ketidakpastian. Ini estimasi, bukan kepastian.
+
+Jawab HANYA dalam JSON valid tanpa markdown:
+Jika can_open true, entry, stop_loss, take_profit wajib berisi angka dari analisis data. Jika belum ada setup, gunakan format:
+{"trend":"sideways","can_open":false,"direction":"none","confidence":"low","reasoning":"Arah belum jelas.","entry":null,"stop_loss":null,"take_profit":null}`;
   }
 
   private parseResult(text: string): GeminiAnalysisResult {
-    let parsed: any;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch (err) {
+    } catch {
       throw new GeminiError(`Gagal parsing JSON dari Gemini: ${text}`);
     }
 
-    const validTrends = ["uptrend", "downtrend", "sideways"];
-    const validDirections = ["buy", "sell", "none"];
-    const validConfidence = ["low", "medium", "high"];
-
-    if (
-      !validTrends.includes(parsed.trend) ||
-      typeof parsed.can_open !== "boolean" ||
-      !validDirections.includes(parsed.direction) ||
-      !validConfidence.includes(parsed.confidence) ||
-      typeof parsed.reasoning !== "string"
-    ) {
+    if (!isGeminiAnalysisResult(parsed)) {
       throw new GeminiError(`Format hasil Gemini tidak sesuai schema: ${text}`);
     }
 
-    return parsed as GeminiAnalysisResult;
+    return parsed;
   }
 }
