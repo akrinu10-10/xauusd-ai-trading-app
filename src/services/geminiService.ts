@@ -8,6 +8,32 @@ import { Candle } from "./twelveDataService";
 // penamaan model Gemini berubah dari waktu ke waktu.
 const GEMINI_MODEL = "gemini-flash-lite-latest";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const ANALYSIS_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    trend: {
+      type: "STRING",
+      enum: ["uptrend", "downtrend", "sideways"],
+    },
+    can_open: { type: "BOOLEAN" },
+    direction: { type: "STRING", enum: ["buy", "sell", "none"] },
+    confidence: { type: "STRING", enum: ["low", "medium", "high"] },
+    reasoning: { type: "STRING" },
+    entry: { type: "NUMBER", nullable: true },
+    stop_loss: { type: "NUMBER", nullable: true },
+    take_profit: { type: "NUMBER", nullable: true },
+  },
+  required: [
+    "trend",
+    "can_open",
+    "direction",
+    "confidence",
+    "reasoning",
+    "entry",
+    "stop_loss",
+    "take_profit",
+  ],
+} as const;
 
 export interface MarketAnalysisInput {
   symbol: string;
@@ -105,6 +131,7 @@ export class GeminiService {
           generationConfig: {
             temperature: 0.2,
             responseMimeType: "application/json",
+            responseSchema: ANALYSIS_RESPONSE_SCHEMA,
           },
         }),
       });
@@ -143,8 +170,7 @@ ${JSON.stringify(candles)}
 
 Nilai arah yang mungkin terjadi pada 4-8 candle berikutnya dan tentukan level entry yang layak ditunggu, stop loss, dan take profit berdasarkan struktur harga. Untuk buy, pastikan stop_loss < entry < take_profit. Untuk sell, pastikan take_profit < entry < stop_loss. Jika arah atau level harga tidak jelas, pilih can_open false, direction "none", dan isi entry, stop_loss, take_profit dengan null. Jelaskan konteks dan ketidakpastian. Ini estimasi, bukan kepastian.
 
-Jawab HANYA dalam JSON valid tanpa markdown:
-Jika can_open true, entry, stop_loss, take_profit wajib berisi angka dari analisis data. Jika belum ada setup, gunakan format:
+Jawab hanya menggunakan JSON sesuai schema yang diberikan, tanpa markdown atau key tambahan. Gunakan tepat nama field dan nilai enum dari schema (trend: uptrend, downtrend, atau sideways; jangan gunakan bullish/bearish). Jika can_open true, entry, stop_loss, take_profit wajib berisi angka dari analisis data. Jika belum ada setup, isi direction dengan none dan ketiga level dengan null.
 {"trend":"sideways","can_open":false,"direction":"none","confidence":"low","reasoning":"Arah belum jelas.","entry":null,"stop_loss":null,"take_profit":null}`;
   }
 
